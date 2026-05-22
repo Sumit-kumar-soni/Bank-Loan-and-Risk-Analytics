@@ -52,7 +52,7 @@ This project roadmap outlines a structured approach to applying SQL for real-wor
 
 10. Triggers preceding fraud flags
 
----
+
 
 
 
