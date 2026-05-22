@@ -1,0 +1,312 @@
+-- Create the Database:
+
+CREATE DATABASE Banking_risk_DB;
+GO
+
+-- Use the above Database
+
+USE Banking_risk_DB;
+GO
+
+-- Creating the loan table
+
+CREATE TABLE Loan_Default (
+    ID INT PRIMARY KEY,
+    year INT,
+    loan_limit VARCHAR(50),
+    Gender VARCHAR(50),
+    approv_in_adv VARCHAR(50),
+    loan_type VARCHAR(50),
+    loan_purpose VARCHAR(50),
+    Credit_Worthiness VARCHAR(50),
+    open_credit VARCHAR(50),
+    business_or_commercial VARCHAR(50),
+    loan_amount INT,
+    rate_of_interest FLOAT,
+    Interest_rate_spread FLOAT,
+    Upfront_charges FLOAT,
+    term FLOAT,
+    Neg_ammortization VARCHAR(50),
+    interest_only VARCHAR(50),
+    lump_sum_payment VARCHAR(50),
+    property_value FLOAT,
+    construction_type VARCHAR(50),
+    occupancy_type VARCHAR(50),
+    Secured_by VARCHAR(50),
+    total_units VARCHAR(50),
+    income FLOAT,
+    credit_type VARCHAR(50),
+    Credit_Score INT,
+    co_applicant_credit_type VARCHAR(50),
+    age VARCHAR(50),
+    submission_of_application VARCHAR(50),
+    LTV FLOAT,
+    Region VARCHAR(50),
+    Security_Type VARCHAR(50),
+    Status INT,
+    dtir1 FLOAT
+);
+GO
+
+-- After the import flat file, Transform the data into perfect Table
+-- Move the data from the raw staging table into our structured table
+INSERT INTO Loan
+SELECT * FROM Loan_Default_Raw;
+
+-- Drop the import flat file table, i.e, Loan_Default_Raw
+DROP TABLE Loan_Default_Raw;
+
+# DATA CLEANING:
+
+-- Median
+
+SELECT DISTINCT PERCENTILE_CONT(0.5) 
+    WITHIN GROUP (ORDER BY Rate_of_interest) OVER () AS Median
+FROM Loan;
+
+SELECT DISTINCT PERCENTILE_CONT(0.5)
+	WITHIN GROUP (ORDER BY Interest_rate_spread ) OVER() AS Median
+FROM Loan;
+
+SELECT DISTINCT PERCENTILE_CONT(0.5)
+	WITHIN GROUP (ORDER BY Upfront_charges) OVER() AS Median
+FROM Loan;
+
+SELECT DISTINCT PERCENTILE_CONT(0.5)
+	WITHIN GROUP (ORDER BY Property_value) OVER() AS Median
+FROM Loan;
+
+SELECT DISTINCT PERCENTILE_CONT(0.5)
+	WITHIN GROUP (ORDER BY Income) OVER() AS Median
+FROM Loan;
+
+SELECT DISTINCT PERCENTILE_CONT(0.5)
+	WITHIN GROUP (ORDER BY LTV) OVER() AS Median
+FROM Loan;
+
+SELECT DISTINCT PERCENTILE_CONT(0.5)
+	WITHIN GROUP (ORDER BY Dtir1) OVER() AS Median
+FROM Loan;
+
+-- Mode
+
+SELECT TOP 1 Loan_limit
+FROM Loan
+GROUP BY Loan_limit
+ORDER BY COUNT(*) DESC;
+
+SELECT TOP 1 Approv_in_adv
+FROM Loan
+GROUP BY Approv_in_adv
+ORDER BY COUNT(*) DESC;
+
+SELECT TOP 1 Neg_ammortization
+FROM Loan
+GROUP BY Neg_ammortization
+ORDER BY COUNT(*) DESC;
+
+SELECT TOP 1 Term
+FROM Loan
+GROUP BY Term
+ORDER BY COUNT(*) DESC;
+
+-- Data quality Check
+
+-- Data Quality check
+
+SELECT
+    COLUMN_NAME
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME = 'Loan';
+
+SELECT
+		ID,
+		COUNT(*)  AS Nr_of_Duplicate 
+FROM Loan
+GROUP BY ID
+HAVING COUNT(*) > 1;
+
+SELECT
+		COUNT(*) AS Total_Rows,
+		COUNT(Interest_rate_spread) AS Non_Null_Values,
+		COUNT(*) - COUNT(Interest_rate_spread) AS Null_Values
+FROM Loan;
+
+SELECT
+*
+FROM Loan
+WHERE 
+		Loan_limit IS NULL
+		OR Approv_in_adv IS NULL
+		OR Loan_purpose IS NULL 
+		OR Rate_of_interest IS NULL
+		OR Property_value IS NULL
+		OR Income IS NULL 
+		OR Dtir1 IS NULL;
+
+-- Data Cleaning by using mode, median
+
+-- Run this query to clean all nulls in table
+
+UPDATE Loan
+	SET
+	   Loan_limit = COALESCE(Loan_limit , 'cf'),
+	   Approv_in_adv = COALESCE(Approv_in_adv, 'nopre'),
+	   Loan_purpose = COALESCE(Loan_purpose, 'Unknown'),
+	   Neg_ammortization = COALESCE(Neg_ammortization, 'not_neg'),
+	   Age = COALESCE(Age, 'Unknown'),
+	   Term = COALESCE(Term, 360.0),
+	   Rate_of_interest = COALESCE(Rate_of_interest, 3.99),
+	   Interest_rate_spread = COALESCE(Interest_rate_spread, 0.3904),
+	   Upfront_charges = COALESCE(Upfront_charges, 2596.45),
+	   Property_value = COALESCE(Property_value, 418000.0),
+	   Income = COALESCE(Income, 5760.0),
+	   LTV = COALESCE(LTV, 75.14),
+	   Dtir1 = COALESCE(Dtir1, 39.0)
+	WHERE 
+		 Loan_limit IS NULL
+		 OR Approv_in_adv IS NULL
+		 OR Loan_purpose IS NULL 
+		 OR Rate_of_interest IS NULL
+		 OR Property_value IS NULL
+		 OR Income IS NULL 
+		 OR Dtir1 IS NULL;
+
+# Queries
+
+-- 1. Default % by loan type
+
+SELECT
+		Loan_type,
+		ROUND(AVG(CAST(Status AS FLOAT) * 100 ), 2) AS Default_rate_percentage
+FROM Loan
+GROUP BY Loan_type;
+
+-- 2. Credit utilization vs. default
+
+SELECT
+		Dtir1 AS Dti_bucket,
+		ROUND(AVG(CAST(Status AS FLOAT)) * 100, 2) AS Default_rate_percentage,
+		COUNT(ID) AS Total_loans_in_bucket
+FROM Loan
+GROUP BY Dtir1
+ORDER BY Dti_bucket;
+
+-- 3. CLV Premium vs. Standard cardholders
+-- Since the dataset lacked actual servicing and acquisition costs, I created an estimated CLV model using interest revenue, upfront fees, and expected credit loss.
+
+SELECT
+		CASE 
+			WHEN Loan_limit='ncf' THEN'Premium'
+			WHEN Loan_limit='cf'  THEN'Standard'
+			END AS Loan_tier,
+		COUNT(*) AS Total_loans,
+		-- Formula i have used to solve this query: Estimated CLV = Interest revenue + Upfront charges - expected credit loss( i am assuming 30% of loan amount bank losses on default/risky customers)
+		ROUND(AVG((CAST(Loan_amount AS FLOAT) * (Rate_of_interest / 100) * (Term / 12 )) + Upfront_charges - CASE WHEN Status = 1 THEN Loan_amount * 0.30 ELSE 0 END ), 2) AS Estimated_CLV
+FROM Loan
+GROUP BY Loan_limit;
+
+-- 4. DTI by age demographic
+
+SELECT 
+		Age,
+		ROUND(AVG(Dtir1),2) as Avg_dti
+FROM loan
+GROUP BY Age
+ORDER BY Age;
+
+-- 5. YoY deposit volumes across branches
+-- My insigth is the North region demonstrated the strongest approval quality with the lowest default rate (22.51%), while the North-East region showed the highest credit risk with a 30.45% default rate.
+
+SELECT
+		year as YoY,
+		Region as Bank_region,
+		COUNT(ID) AS Total_applications,
+		SUM(CAST(Loan_amount AS FLOAT)) AS  Total_volume,
+		ROUND(AVG(CAST(loan_amount AS FLOAT)), 2) AS Avg_loan_size,
+		ROUND(AVG(CAST(Status AS FLOAT)) * 100 , 2) AS Default_rate_percenatge   -- checking approval quality in each region. That was North region approves better quality borrowers
+FROM Loan
+GROUP BY Region, Year
+ORDER BY Total_volume DESC;
+
+-- 6. The High Risk Borrower Analysis (DTI & LTV)
+
+WITH Bucket_customer AS(
+SELECT
+		ID,
+        Property_value,
+        Rate_of_interest,
+        Dtir1,
+        LTV,
+		CASE
+			WHEN Dtir1 > 50 AND LTV > 96 THEN 'High Risk'
+			WHEN Dtir1 BETWEEN 44 AND 50 AND LTV BETWEEN 91 AND 95 THEN 'Medium High Risk'
+			WHEN Dtir1 BETWEEN 37 AND 43 AND LTV BETWEEN 81 AND 90 THEN 'Moderate'
+			WHEN Dtir1 BETWEEN 36 AND 30 AND LTV BETWEEN 60 AND 80 THEN 'Low Risk'
+			ELSE 'Excellent'
+		END AS Bucket
+FROM Loan
+)
+
+SELECT
+		COUNT(*) AS Total_customers,
+		CONCAT(SUM(Property_value) / 1000000, ' M') AS Total_property_value_in_Millions,
+		ROUND(AVG(Rate_of_interest), 2) AS Avg_interest_rate,
+		Bucket
+FROM Bucket_customer
+GROUP BY Bucket
+ORDER BY Total_customers DESC
+
+-- 7. Profitability by Loan Purpose
+-- This tells to executive team which loan products are actually drivin the bank's profit margins
+
+SELECT
+		Loan_purpose,
+		ROUND(AVG(Interest_rate_spread), 2) AS Avg_Interest_rate_spread,
+		CONCAT(SUM(Upfront_charges) / 1000000, ' M') AS Total_upfront_charges_in_Millions
+FROM Loan
+GROUP BY Loan_purpose
+ORDER BY Loan_purpose 
+
+-- 8. The Fair Lending Demographics Check
+
+SELECT
+		Age,
+		Loan_purpose,
+		ROUND(AVG(Rate_of_interest), 2) AS Avg_interest_rate
+FROM Loan
+WHERE Age != 'Unknown' AND Loan_purpose != 'Unknown'
+GROUP BY Age, Loan_purpose
+ORDER BY Avg_interest_rate DESC;
+
+-- 9. Customers with loan + checking overlap
+
+SELECT
+		CASE
+			WHEN Open_credit = 'opc' THEN 'Multiple Prodct'
+			WHEN Open_credit = 'nopc' THEN 'Single Product'
+			ELSE 'Unknown'
+		END AS Portfolio_status,
+		COUNT(ID) AS Total_borrowers,
+		ROUND(AVG(CAST(Status AS FLOAT)) * 100, 2) AS Default_rate_percentage   -- check if having overlapping credit makes them more risky
+FROM Loan
+GROUP BY Open_credit
+ORDER BY Total_borrowers DESC;
+
+-- 10. Triggers preceding fraud flags
+
+SELECT 
+    Credit_type AS Credit_bureau_type,
+    Loan_purpose,
+    COUNT(ID) AS Total_defaults_triggered,
+    ROUND(
+        (CAST(COUNT(ID) AS FLOAT) / 
+        (SELECT COUNT(*) FROM Loan ld2 
+         WHERE ld2.credit_type = Loan.credit_type 
+         AND ld2.loan_purpose = Loan.loan_purpose)
+        ) * 100, 2) AS Actual_default_rate_percentage  -- To see the OVERALL default rate for this combination to ensure it's actually risky
+
+FROM Loan
+WHERE Status = 1                                       -- Only looking at the "Bad" accounts
+GROUP BY Credit_type, Loan_purpose
+ORDER BY Total_defaults_triggered DESC;
