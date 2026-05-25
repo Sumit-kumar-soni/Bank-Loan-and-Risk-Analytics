@@ -21,7 +21,7 @@ This project is an end-to-end data analytics solution designed to evaluate mortg
 
 ## Files Included
 * `Banking_Risk_Queries.sql`: The SQL scripts containing the advanced risk logic, DTI bucketing, and CLV calculations.
-* `Loan_Underwriting_Dashboard.pbix`: The final Power BI project file containing the data model and interactive canvas.
+* `Bank Loan Report.pbix`: The final Power BI project file containing the data model and interactive canvas.
 * `Dashboard_Screenshots/`: High-resolution images of the final dashboard pages (Executive Summary, Risk Matrix, and Profitability).
 
 <img width="1920" height="1031" alt="Bank Loan Report" src="https://github.com/user-attachments/assets/b002486b-311b-49f8-88b4-59ac9aefb9a1" />
